@@ -1,0 +1,122 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:paddingVertical="12dp"
+    android:background="?attr/selectableItemBackground">
+
+    <View
+        android:id="@+id/ivStoreIcon"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/bg_circle_mint"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <ImageView
+        android:id="@+id/ivStoreArrow"
+        android:layout_width="24dp"
+        android:layout_height="24dp"
+        android:src="@drawable/ic_arrow_up"
+        app:layout_constraintBottom_toBottomOf="@id/ivStoreIcon"
+        app:layout_constraintEnd_toEndOf="@id/ivStoreIcon"
+        app:layout_constraintStart_toStartOf="@id/ivStoreIcon"
+        app:layout_constraintTop_toTopOf="@id/ivStoreIcon"
+        app:tint="@color/neo_mint_accent" />
+
+    <TextView
+        android:id="@+id/tvStoreInitial"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:textColor="@color/neo_mint_accent"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:visibility="gone"
+        app:layout_constraintBottom_toBottomOf="@id/ivStoreIcon"
+        app:layout_constraintEnd_toEndOf="@id/ivStoreIcon"
+        app:layout_constraintStart_toStartOf="@id/ivStoreIcon"
+        app:layout_constraintTop_toTopOf="@id/ivStoreIcon"
+        tools:text="S" />
+
+    <TextView
+        android:id="@+id/tvStoreName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="16dp"
+        android:text="Waitrose &amp; Partners"
+        android:textColor="?android:attr/textColorPrimary"
+        android:textSize="17sp"
+        android:textStyle="bold"
+        app:layout_constraintEnd_toStartOf="@id/tvStorePrice"
+        app:layout_constraintStart_toEndOf="@id/ivStoreIcon"
+        app:layout_constraintTop_toTopOf="@id/ivStoreIcon" />
+
+    <LinearLayout
+        android:id="@+id/llStoreDetails"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="2dp"
+        app:layout_constraintEnd_toEndOf="@id/tvStoreName"
+        app:layout_constraintStart_toStartOf="@id/tvStoreName"
+        app:layout_constraintTop_toBottomOf="@id/tvStoreName">
+
+        <TextView
+            android:id="@+id/tvStoreDistance"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="0.4 miles"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_fuel"
+            app:tint="?android:attr/textColorSecondary" />
+
+        <TextView
+            android:id="@+id/tvStoreFuel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:text="£0.15"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+        <ImageView
+            android:layout_width="14dp"
+            android:layout_height="14dp"
+            android:layout_marginStart="8dp"
+            android:src="@drawable/ic_clock"
+            app:tint="?android:attr/textColorSecondary" />
+
+        <TextView
+            android:id="@+id/tvStoreTime"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="4dp"
+            android:text="5 min"
+            android:textColor="?android:attr/textColorSecondary"
+            android:textSize="13sp" />
+
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/tvStorePrice"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="£££"
+        android:textColor="@color/neo_mint_accent"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+</androidx.constraintlayout.widget.ConstraintLayout>
