@@ -5,7 +5,8 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -42,28 +43,27 @@ class MainActivity : ComponentActivity() {
         val currentUser = auth.currentUser
 
         if (currentUser != null) {
-            // User is signed in, go to Dashboard
-            startActivity(Intent(this, DashboardActivity::class.java))
+            // Using setClassName to bypass a Kotlin 2.0 compiler crash with class literals
+            val dashboardIntent = Intent().setClassName(this, "com.example.grocio.DashboardActivity")
+            startActivity(dashboardIntent)
         } else {
-            // No user is signed in, go to Login
-            startActivity(Intent(this, LoginActivity::class.java))
+            val loginIntent = Intent().setClassName(this, "com.example.grocio.LoginActivity")
+            startActivity(loginIntent)
         }
-        // Close MainActivity so user can't go back to splash
         finish()
     }
 }
 
 @Composable
 fun SplashScreen(onTimeout: () -> Unit) {
-    // LaunchedEffect runs when the screen is first displayed
     LaunchedEffect(Unit) {
-        delay(1500) // 1.5 seconds delay for the splash effect
+        delay(1500)
         onTimeout()
     }
 
-    androidx.compose.foundation.layout.Column(
+    Column(
         modifier = Modifier.fillMaxSize(),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
