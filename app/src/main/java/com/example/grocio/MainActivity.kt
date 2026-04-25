@@ -73,14 +73,5 @@ fun SplashScreen(onTimeout: () -> Unit) {
             color = colorResource(id = R.color.neo_mint_accent),
             fontFamily = FontFamily.SansSerif
         )
-        Spacer(modifier = Modifier.height(16.dp))
-        Text(
-            text = "\"Would you like your receipts?\"\nSAY: \"Yes please!\"",
-            fontSize = 18.sp,
-            fontWeight = FontWeight.Medium,
-            color = colorResource(id = R.color.neo_mint_accent),
-            fontFamily = FontFamily.Monospace,
-            textAlign = TextAlign.Center
-        )
     }
 }

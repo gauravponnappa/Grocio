@@ -128,7 +128,6 @@ public class DashboardActivity extends AppCompatActivity {
         String fileName = "receipt_" + System.currentTimeMillis() + ".jpg";
         StorageReference storageRef = storage.getReference()
                 .child("receipts")
-                .child(user.getUid())
                 .child(fileName);
 
         Toast.makeText(this, "Uploading receipt...", Toast.LENGTH_SHORT).show();
@@ -549,13 +548,15 @@ public class DashboardActivity extends AppCompatActivity {
         int timeMins;
         double fuelCost;
         if (isWalkMode) {
-            timeMins = (int) (distanceMiles * 20);
+            timeMins = (int) (distanceMiles * 18); // Average walking speed in UK: 18-20 mins per mile
             fuelCost = 0.0;
-            ivFuelIcon.setAlpha(0.3f);
+            ivFuelIcon.setVisibility(View.GONE);
+            tvStoreFuel.setVisibility(View.GONE);
         } else {
-            timeMins = (int) (distanceMiles * 5 + 2);
-            fuelCost = distanceMiles * 0.15;
-            ivFuelIcon.setAlpha(1.0f);
+            timeMins = (int) (distanceMiles * 4 + 3); // Average UK city driving: 4 mins per mile + 3 mins overhead
+            fuelCost = distanceMiles * 0.16; // Average UK car: ~£0.16 per mile
+            ivFuelIcon.setVisibility(View.VISIBLE);
+            tvStoreFuel.setVisibility(View.VISIBLE);
         }
 
         tvStoreFuel.setText(String.format(Locale.UK, "£%.2f", fuelCost));
@@ -610,13 +611,15 @@ public class DashboardActivity extends AppCompatActivity {
             double fuelCost;
             
             if (isWalkMode) {
-                timeMins = (int) (distanceValues[i] * 20); // 20 mins per mile
+                timeMins = (int) (distanceValues[i] * 18); // Average walking speed: 18 mins per mile
                 fuelCost = 0.0;
-                ivFuelIcon.setAlpha(0.3f);
+                ivFuelIcon.setVisibility(View.GONE);
+                tvStoreFuel.setVisibility(View.GONE);
             } else {
-                timeMins = (int) (distanceValues[i] * 5 + 2); // 5 mins per mile + traffic
-                fuelCost = distanceValues[i] * 0.15; // 15p per mile
-                ivFuelIcon.setAlpha(1.0f);
+                timeMins = (int) (distanceValues[i] * 4 + 3); // Average UK city driving: 4 mins per mile + 3 mins overhead
+                fuelCost = distanceValues[i] * 0.16; // Average UK car: ~£0.16 per mile
+                ivFuelIcon.setVisibility(View.VISIBLE);
+                tvStoreFuel.setVisibility(View.VISIBLE);
             }
 
             tvStoreFuel.setText(String.format(Locale.UK, "£%.2f", fuelCost));
