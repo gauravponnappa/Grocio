@@ -44,12 +44,19 @@ import com.google.android.libraries.places.api.net.PlacesClient;
 import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.firebase.auth.FirebaseAuth;
 import com.google.firebase.auth.FirebaseUser;
+import com.google.firebase.database.DataSnapshot;
+import com.google.firebase.database.DatabaseError;
+import com.google.firebase.database.DatabaseReference;
+import com.google.firebase.database.FirebaseDatabase;
+import com.google.firebase.database.ValueEventListener;
 import com.google.firebase.firestore.FirebaseFirestore;
 import com.google.firebase.storage.FirebaseStorage;
 import com.google.firebase.storage.StorageReference;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
@@ -62,9 +69,9 @@ public class DashboardActivity extends AppCompatActivity {
     private ImageButton btnLocation, btnProfileTop, btnAdd, btnDeleteList;
     private ImageView ivTransportIcon;
     private CardView cvUploadReceipt, cvShoppingList;
-    private View dashboardContent, shoppingListContent;
+    private View dashboardContent, shoppingListContent, spentContent;
     private EditText etItem;
-    private RecyclerView rvShoppingList;
+    private RecyclerView rvShoppingList, rvSpentList;
     private ShoppingListAdapter adapter;
     private java.util.List<String> shoppingItems;
     private java.util.List<String> listNames;
@@ -73,6 +80,7 @@ public class DashboardActivity extends AppCompatActivity {
     private FirebaseAuth mAuth;
     private FirebaseStorage storage;
     private FirebaseFirestore db;
+    private FirebaseDatabase rtdb;
     private FusedLocationProviderClient fusedLocationClient;
     private PlacesClient placesClient;
 
@@ -130,9 +138,13 @@ public class DashboardActivity extends AppCompatActivity {
                 .child("receipts")
                 .child(fileName);
 
+        com.google.firebase.storage.StorageMetadata metadata = new com.google.firebase.storage.StorageMetadata.Builder()
+                .setCustomMetadata("userId", user.getUid())
+                .build();
+
         Toast.makeText(this, "Uploading receipt...", Toast.LENGTH_SHORT).show();
 
-        storageRef.putFile(fileUri)
+        storageRef.putFile(fileUri, metadata)
                 .continueWithTask(task -> {
                     if (!task.isSuccessful()) {
                         throw task.getException();
@@ -175,6 +187,7 @@ public class DashboardActivity extends AppCompatActivity {
         mAuth = FirebaseAuth.getInstance();
         storage = FirebaseStorage.getInstance();
         db = FirebaseFirestore.getInstance();
+        rtdb = FirebaseDatabase.getInstance();
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         // Initialize Places
@@ -198,9 +211,11 @@ public class DashboardActivity extends AppCompatActivity {
         tvShoppingListPreview = findViewById(R.id.tvShoppingListPreview);
         dashboardContent = findViewById(R.id.dashboardContent);
         shoppingListContent = findViewById(R.id.shoppingListContent);
+        spentContent = findViewById(R.id.spentContent);
         etItem = findViewById(R.id.etItem);
         btnAdd = findViewById(R.id.btnAdd);
         rvShoppingList = findViewById(R.id.rvShoppingList);
+        rvSpentList = findViewById(R.id.rvSpentList);
         tvCurrentListName = findViewById(R.id.tvCurrentListName);
         btnManageLists = findViewById(R.id.btnManageLists);
         btnDeleteList = findViewById(R.id.btnDeleteList);
@@ -368,6 +383,7 @@ public class DashboardActivity extends AppCompatActivity {
     private void showShoppingList(boolean show) {
         if (show) {
             dashboardContent.setVisibility(View.GONE);
+            spentContent.setVisibility(View.GONE);
             shoppingListContent.setVisibility(View.VISIBLE);
         } else {
             shoppingListContent.setVisibility(View.GONE);
@@ -375,9 +391,119 @@ public class DashboardActivity extends AppCompatActivity {
         }
     }
 
+    private void showSpentContent() {
+        dashboardContent.setVisibility(View.GONE);
+        shoppingListContent.setVisibility(View.GONE);
+        spentContent.setVisibility(View.VISIBLE);
+        loadSpentData();
+    }
+
+    private void loadSpentData() {
+        FirebaseUser user = mAuth.getCurrentUser();
+        if (user == null) return;
+
+        DatabaseReference ref = rtdb.getReference("receipts");
+        ref.orderByChild("userId").equalTo(user.getUid()).addValueEventListener(new ValueEventListener() {
+            @Override
+            public void onDataChange(@NonNull DataSnapshot snapshot) {
+                List<Map<String, Object>> receipts = new ArrayList<>();
+                for (DataSnapshot ds : snapshot.getChildren()) {
+                    Map<String, Object> data = (Map<String, Object>) ds.getValue();
+                    if (data != null && "processed".equals(data.get("status"))) {
+                        receipts.add(data);
+                    }
+                }
+                
+                // Sort by date or processedAt descending
+                Collections.sort(receipts, (a, b) -> {
+                    long t1 = a.containsKey("processedAt") ? (long) a.get("processedAt") : 0;
+                    long t2 = b.containsKey("processedAt") ? (long) b.get("processedAt") : 0;
+                    return Long.compare(t2, t1);
+                });
+
+                updateSpentList(receipts);
+            }
+
+            @Override
+            public void onCancelled(@NonNull DatabaseError error) {
+                Toast.makeText(DashboardActivity.this, "Failed to load expenses", Toast.LENGTH_SHORT).show();
+            }
+        });
+    }
+
+    private void updateSpentList(List<Map<String, Object>> receipts) {
+        if (receipts.isEmpty()) {
+            findViewById(R.id.tvSpentEmpty).setVisibility(View.VISIBLE);
+        } else {
+            findViewById(R.id.tvSpentEmpty).setVisibility(View.GONE);
+        }
+
+        SpentListAdapter spentAdapter = new SpentListAdapter(receipts);
+        rvSpentList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
+        rvSpentList.setAdapter(spentAdapter);
+    }
+
+    private static class SpentListAdapter extends RecyclerView.Adapter<SpentListAdapter.ViewHolder> {
+        private final List<Map<String, Object>> receipts;
+
+        SpentListAdapter(List<Map<String, Object>> receipts) {
+            this.receipts = receipts;
+        }
+
+        @NonNull
+        @Override
+        public ViewHolder onCreateViewHolder(@NonNull android.view.ViewGroup parent, int viewType) {
+            View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_spent_receipt, parent, false);
+            return new ViewHolder(view);
+        }
+
+        @Override
+        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            Map<String, Object> data = receipts.get(position);
+            
+            Map<String, Object> store = (Map<String, Object>) data.get("store");
+            Map<String, Object> receipt = (Map<String, Object>) data.get("receipt");
+            Map<String, Object> summary = (Map<String, Object>) data.get("summary");
+
+            if (store != null) {
+                holder.tvStoreName.setText((String) store.get("name"));
+                holder.tvStoreAddress.setText((String) store.get("address"));
+            }
+
+            if (receipt != null) {
+                Object total = receipt.get("total");
+                holder.tvTotalAmount.setText("£" + (total != null ? total.toString() : "0.00"));
+                holder.tvDate.setText((String) receipt.get("date"));
+            }
+
+            if (summary != null) {
+                Object count = summary.get("itemCount");
+                holder.tvItemCount.setText((count != null ? count.toString() : "0") + " items");
+            }
+        }
+
+        @Override
+        public int getItemCount() {
+            return receipts.size();
+        }
+
+        static class ViewHolder extends RecyclerView.ViewHolder {
+            TextView tvStoreName, tvTotalAmount, tvStoreAddress, tvDate, tvItemCount;
+
+            ViewHolder(View view) {
+                super(view);
+                tvStoreName = view.findViewById(R.id.tvStoreName);
+                tvTotalAmount = view.findViewById(R.id.tvTotalAmount);
+                tvStoreAddress = view.findViewById(R.id.tvStoreAddress);
+                tvDate = view.findViewById(R.id.tvDate);
+                tvItemCount = view.findViewById(R.id.tvItemCount);
+            }
+        }
+    }
+
     @Override
     public void onBackPressed() {
-        if (shoppingListContent.getVisibility() == View.VISIBLE) {
+        if (shoppingListContent.getVisibility() == View.VISIBLE || spentContent.getVisibility() == View.VISIBLE) {
             showShoppingList(false);
         } else {
             super.onBackPressed();
@@ -661,7 +787,7 @@ public class DashboardActivity extends AppCompatActivity {
         } else if (timeOfDay < 21) {
             greeting = "Good Evening,";
         } else {
-            greeting = "Good Night,";
+            greeting = "Welcome Back,";
         }
         tvWelcome.setText(greeting);
     }
@@ -671,12 +797,16 @@ public class DashboardActivity extends AppCompatActivity {
             int itemId = item.getItemId();
             if (itemId == R.id.nav_home) {
                 showShoppingList(false);
+                spentContent.setVisibility(View.GONE);
                 return true;
             } else if (itemId == R.id.nav_scan) {
                 showScanDialog();
                 return true;
             } else if (itemId == R.id.nav_list) {
                 showShoppingList(true);
+                return true;
+            } else if (itemId == R.id.nav_spent) {
+                showSpentContent();
                 return true;
             }
             return false;
