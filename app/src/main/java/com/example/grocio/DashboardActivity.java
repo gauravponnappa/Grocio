@@ -187,7 +187,7 @@ public class DashboardActivity extends AppCompatActivity {
         mAuth = FirebaseAuth.getInstance();
         storage = FirebaseStorage.getInstance();
         db = FirebaseFirestore.getInstance();
-        rtdb = FirebaseDatabase.getInstance();
+        rtdb = FirebaseDatabase.getInstance("https://list-d3f8b-default-rtdb.firebaseio.com/");
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
         // Initialize Places
@@ -402,45 +402,110 @@ public class DashboardActivity extends AppCompatActivity {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
 
-        DatabaseReference ref = rtdb.getReference("receipts");
-        ref.orderByChild("userId").equalTo(user.getUid()).addValueEventListener(new ValueEventListener() {
+        // 1. Get all receipt fileNames from Firestore for this user
+        db.collection("receipts")
+                .whereEqualTo("userId", user.getUid())
+                .get()
+                .addOnSuccessListener(queryDocumentSnapshots -> {
+                    if (queryDocumentSnapshots.isEmpty()) {
+                        Toast.makeText(DashboardActivity.this, "No receipts found in Firestore", Toast.LENGTH_SHORT).show();
+                        updateSpentList(new ArrayList<>());
+                        return;
+                    }
+
+                    List<String> fileNames = new ArrayList<>();
+                    for (com.google.firebase.firestore.DocumentSnapshot doc : queryDocumentSnapshots) {
+                        String fileName = doc.getString("fileName");
+                        if (fileName != null) {
+                            // RTDB keys are formatted: receipts_filename_extension
+                            String filePath = "receipts/" + fileName;
+                            String receiptId = filePath.replace(".", "_")
+                                                       .replace("#", "_")
+                                                       .replace("$", "_")
+                                                       .replace("/", "_")
+                                                       .replace("[", "_")
+                                                       .replace("]", "_");
+                            fileNames.add(receiptId);
+                        }
+                    }
+
+                    if (fileNames.isEmpty()) {
+                        updateSpentList(new ArrayList<>());
+                        return;
+                    }
+
+                    Toast.makeText(DashboardActivity.this, "Checking " + fileNames.size() + " receipts...", Toast.LENGTH_SHORT).show();
+                    // 2. Fetch each receipt from RTDB by its receiptId
+                    fetchReceiptsFromRTDB(fileNames);
+                })
+                .addOnFailureListener(e -> {
+                    Toast.makeText(DashboardActivity.this, "Error fetching receipt list: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                });
+    }
+
+    private void fetchReceiptsFromRTDB(List<String> receiptIds) {
+        rtdb.getReference("receipts").addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
                 List<Map<String, Object>> receipts = new ArrayList<>();
                 for (DataSnapshot ds : snapshot.getChildren()) {
-                    Map<String, Object> data = (Map<String, Object>) ds.getValue();
-                    if (data != null && "processed".equals(data.get("status"))) {
-                        receipts.add(data);
+                    String key = ds.getKey();
+                    if (key != null && receiptIds.contains(key)) {
+                        Map<String, Object> data = (Map<String, Object>) ds.getValue();
+                        if (data != null) {
+                            receipts.add(data);
+                        }
                     }
                 }
                 
-                // Sort by date or processedAt descending
-                Collections.sort(receipts, (a, b) -> {
-                    long t1 = a.containsKey("processedAt") ? (long) a.get("processedAt") : 0;
-                    long t2 = b.containsKey("processedAt") ? (long) b.get("processedAt") : 0;
-                    return Long.compare(t2, t1);
-                });
-
-                updateSpentList(receipts);
+                android.util.Log.d("RTDB_DEBUG", "Found " + receipts.size() + " matches in RTDB");
+                sortAndUpdateSpent(receipts);
             }
 
             @Override
             public void onCancelled(@NonNull DatabaseError error) {
-                Toast.makeText(DashboardActivity.this, "Failed to load expenses", Toast.LENGTH_SHORT).show();
+                Toast.makeText(DashboardActivity.this, "RTDB Error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
+                sortAndUpdateSpent(new ArrayList<>());
             }
         });
     }
 
-    private void updateSpentList(List<Map<String, Object>> receipts) {
-        if (receipts.isEmpty()) {
-            findViewById(R.id.tvSpentEmpty).setVisibility(View.VISIBLE);
-        } else {
-            findViewById(R.id.tvSpentEmpty).setVisibility(View.GONE);
-        }
+    private void sortAndUpdateSpent(List<Map<String, Object>> receipts) {
+        // Sort by processedAt descending
+        Collections.sort(receipts, (a, b) -> {
+            try {
+                long t1 = 0, t2 = 0;
+                if (a.containsKey("processedAt")) {
+                    Object p1 = a.get("processedAt");
+                    t1 = (p1 instanceof Long) ? (Long) p1 : ((Number) p1).longValue();
+                }
+                if (b.containsKey("processedAt")) {
+                    Object p2 = b.get("processedAt");
+                    t2 = (p2 instanceof Long) ? (Long) p2 : ((Number) p2).longValue();
+                }
+                return Long.compare(t2, t1);
+            } catch (Exception e) {
+                return 0;
+            }
+        });
 
-        SpentListAdapter spentAdapter = new SpentListAdapter(receipts);
-        rvSpentList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
-        rvSpentList.setAdapter(spentAdapter);
+        updateSpentList(receipts);
+    }
+
+    private void updateSpentList(List<Map<String, Object>> receipts) {
+        runOnUiThread(() -> {
+            if (receipts.isEmpty()) {
+                findViewById(R.id.tvSpentEmpty).setVisibility(View.VISIBLE);
+                Toast.makeText(this, "No receipts found in database", Toast.LENGTH_SHORT).show();
+            } else {
+                findViewById(R.id.tvSpentEmpty).setVisibility(View.GONE);
+                Toast.makeText(this, "Showing " + receipts.size() + " expenses", Toast.LENGTH_SHORT).show();
+            }
+
+            SpentListAdapter spentAdapter = new SpentListAdapter(receipts);
+            rvSpentList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
+            rvSpentList.setAdapter(spentAdapter);
+        });
     }
 
     private static class SpentListAdapter extends RecyclerView.Adapter<SpentListAdapter.ViewHolder> {
