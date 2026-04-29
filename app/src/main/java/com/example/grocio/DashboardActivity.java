@@ -146,7 +146,7 @@ public class DashboardActivity extends AppCompatActivity {
                 .setCustomMetadata("userId", user.getUid())
                 .build();
 
-        Toast.makeText(this, "Uploading receipt...", Toast.LENGTH_SHORT).show();
+        Toast.makeText(this, "Uploading...", Toast.LENGTH_SHORT).show();
 
         storageRef.putFile(fileUri, metadata)
                 .continueWithTask(task -> {
