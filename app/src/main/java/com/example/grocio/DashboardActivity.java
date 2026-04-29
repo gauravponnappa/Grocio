@@ -175,10 +175,10 @@ public class DashboardActivity extends AppCompatActivity {
         db.collection("receipts")
                 .add(receipt)
                 .addOnSuccessListener(documentReference -> {
-                    Toast.makeText(DashboardActivity.this, "Receipt saved to Firestore!", Toast.LENGTH_SHORT).show();
+                    Toast.makeText(DashboardActivity.this, "Receipt saved !", Toast.LENGTH_SHORT).show();
                 })
                 .addOnFailureListener(e -> {
-                    Toast.makeText(DashboardActivity.this, "Error saving metadata: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                    Toast.makeText(DashboardActivity.this, "Error metadata: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
     }
 
