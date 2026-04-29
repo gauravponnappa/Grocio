@@ -13,6 +13,8 @@ import android.os.Bundle;
 import android.provider.MediaStore;
 import android.view.LayoutInflater;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.AutoCompleteTextView;
 import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
@@ -64,17 +66,17 @@ import java.util.Map;
 
 public class DashboardActivity extends AppCompatActivity {
 
-    private TextView tvWelcome, tvUserName, tvLogo, tvLocationBubble, tvStoreListEmpty, tvNearbyTitle, tvShoppingListPreview, tvCurrentListName, btnManageLists, tvTransportText;
+    private TextView tvWelcome, tvUserName, tvLogo, tvLocationBubble, tvStoreListEmpty, tvNearbyTitle, tvShoppingListPreview, tvCurrentListName, btnManageLists, tvTransportText, tvListTotal;
     private LinearLayout llStoreContainer, btnTransportMode;
     private ImageButton btnLocation, btnProfileTop, btnAdd, btnDeleteList;
     private ImageView ivTransportIcon;
     private CardView cvUploadReceipt, cvShoppingList;
     private View dashboardContent, shoppingListContent, spentContent;
-    private EditText etItem;
+    private AutoCompleteTextView etItem;
     private RecyclerView rvShoppingList, rvSpentList;
-    private ShoppingListAdapter adapter;
-    private java.util.List<String> shoppingItems;
-    private java.util.List<String> listNames;
+    private ShoppingListAdapter shoppingAdapter;
+    private List<ShoppingItem> shoppingItems;
+    private List<String> listNames;
     private String currentListName = "My Shopping List";
     private android.content.SharedPreferences sharedPreferences;
     private FirebaseAuth mAuth;
@@ -85,6 +87,8 @@ public class DashboardActivity extends AppCompatActivity {
     private PlacesClient placesClient;
 
     private boolean isWalkMode = false;
+    private String selectedPrice = "";
+    private String selectedStore = "";
 
     private final ActivityResultLauncher<String[]> locationPermissionLauncher = registerForActivityResult(
             new ActivityResultContracts.RequestMultiplePermissions(),
@@ -190,7 +194,6 @@ public class DashboardActivity extends AppCompatActivity {
         rtdb = FirebaseDatabase.getInstance("https://list-d3f8b-default-rtdb.firebaseio.com/");
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this);
 
-        // Initialize Places
         if (!Places.isInitialized()) {
             Places.initialize(getApplicationContext(), "AIzaSyDjhXB43MMrsyP06ZJY7VmjvkisiPFNi1Y");
         }
@@ -219,12 +222,13 @@ public class DashboardActivity extends AppCompatActivity {
         tvCurrentListName = findViewById(R.id.tvCurrentListName);
         btnManageLists = findViewById(R.id.btnManageLists);
         btnDeleteList = findViewById(R.id.btnDeleteList);
-        btnTransportMode = findViewById(R.id.btnTransportMode);
+        tvListTotal = findViewById(R.id.tvListTotal);
         ivTransportIcon = findViewById(R.id.ivTransportIcon);
         tvTransportText = findViewById(R.id.tvTransportText);
         BottomNavigationView bottomNav = findViewById(R.id.bottomNavigation);
 
         sharedPreferences = getSharedPreferences("GrocioPrefs", MODE_PRIVATE);
+        
         setupShoppingList();
 
         btnLocation.setOnClickListener(v -> checkLocationPermissions());
@@ -238,19 +242,18 @@ public class DashboardActivity extends AppCompatActivity {
             isWalkMode = !isWalkMode;
             ivTransportIcon.setImageResource(isWalkMode ? R.drawable.ic_walk : R.drawable.ic_car);
             tvTransportText.setText(isWalkMode ? "Walking" : "Driving");
-            fetchLocation(); // Refresh data with new mode
+            fetchLocation();
         });
 
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
             Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
-            v.setPadding(systemBars.left, systemBars.top, systemBars.right, 0); // Keep bottom padding for nav
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, 0);
             return insets;
         });
 
         setupUserDisplay();
         setupBottomNavigation(bottomNav);
-        
-        // Initial check on launch
+        setupSearchSuggestions();
         checkLocationPermissions();
     }
 
@@ -265,46 +268,72 @@ public class DashboardActivity extends AppCompatActivity {
         listNames = new java.util.ArrayList<>(namesSet);
         currentListName = sharedPreferences.getString("current_list_name", "My Shopping List");
         
-        // Ensure current list is in the list names
         if (!listNames.contains(currentListName)) {
-            if (!listNames.isEmpty()) {
-                currentListName = listNames.get(0);
-            } else {
-                currentListName = "My Shopping List";
-                listNames.add(currentListName);
-            }
+            currentListName = listNames.isEmpty() ? "My Shopping List" : listNames.get(0);
         }
         
         tvCurrentListName.setText(currentListName);
         loadCurrentListItems();
+        calculateTotal();
         
-        adapter = new ShoppingListAdapter(shoppingItems, new ShoppingListAdapter.OnItemClickListener() {
+        shoppingAdapter = new ShoppingListAdapter(shoppingItems, new ShoppingListAdapter.OnItemClickListener() {
             @Override
             public void onItemClick(int position) {
-                // Toggle completion or similar if needed
+                ShoppingItem item = shoppingItems.get(position);
+                item.isChecked = !item.isChecked;
+                saveShoppingItems();
+                shoppingAdapter.notifyItemChanged(position);
+                calculateTotal();
             }
 
             @Override
             public void onDeleteClick(int position) {
                 shoppingItems.remove(position);
                 saveShoppingItems();
-                adapter.notifyItemRemoved(position);
+                shoppingAdapter.notifyItemRemoved(position);
                 updateShoppingListPreview();
+                calculateTotal();
             }
         });
         rvShoppingList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
-        rvShoppingList.setAdapter(adapter);
+        rvShoppingList.setAdapter(shoppingAdapter);
 
         btnAdd.setOnClickListener(v -> {
-            String item = etItem.getText().toString().trim();
-            if (!item.isEmpty()) {
-                shoppingItems.add(item);
+            String name = etItem.getText().toString().trim();
+            if (!name.isEmpty()) {
+                shoppingItems.add(new ShoppingItem(name, selectedPrice, selectedStore, false));
                 saveShoppingItems();
-                adapter.notifyItemInserted(shoppingItems.size() - 1);
+                shoppingAdapter.notifyItemInserted(shoppingItems.size() - 1);
                 etItem.setText("");
+                selectedPrice = "";
+                selectedStore = "";
                 updateShoppingListPreview();
+                calculateTotal();
             }
         });
+        
+        etItem.setOnItemClickListener((parent, view, position, id) -> {
+            Map<String, String> suggestion = (Map<String, String>) parent.getItemAtPosition(position);
+            selectedPrice = suggestion.get("price");
+            selectedStore = suggestion.get("store");
+        });
+    }
+
+    private void calculateTotal() {
+        double total = 0;
+        if (shoppingItems != null) {
+            for (ShoppingItem item : shoppingItems) {
+                if (!item.isChecked && item.price != null && !item.price.isEmpty()) {
+                    try {
+                        String cleanPrice = item.price.replace("£", "").trim();
+                        if (!cleanPrice.isEmpty()) {
+                            total += Double.parseDouble(cleanPrice);
+                        }
+                    } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+        tvListTotal.setText(String.format(Locale.UK, "£%.2f", total));
     }
 
     private void showDeleteListConfirmation() {
@@ -328,28 +357,30 @@ public class DashboardActivity extends AppCompatActivity {
 
     private void loadCurrentListItems() {
         java.util.Set<String> set = sharedPreferences.getStringSet("shopping_list_" + currentListName, new java.util.HashSet<>());
-        shoppingItems = new java.util.ArrayList<>(set);
+        shoppingItems = new ArrayList<>();
+        for (String csv : set) {
+            shoppingItems.add(ShoppingItem.fromCsv(csv));
+        }
     }
 
     private void saveShoppingItems() {
-        sharedPreferences.edit().putStringSet("shopping_list_" + currentListName, new java.util.HashSet<>(shoppingItems)).apply();
+        java.util.Set<String> set = new java.util.HashSet<>();
+        for (ShoppingItem item : shoppingItems) {
+            set.add(item.toCsv());
+        }
+        sharedPreferences.edit().putStringSet("shopping_list_" + currentListName, set).apply();
     }
 
     private void showManageListsDialog() {
         String[] options = new String[listNames.size() + 1];
-        for (int i = 0; i < listNames.size(); i++) {
-            options[i] = listNames.get(i);
-        }
+        for (int i = 0; i < listNames.size(); i++) options[i] = listNames.get(i);
         options[listNames.size()] = "+ Create New List";
 
         new AlertDialog.Builder(this)
                 .setTitle("Manage Lists")
                 .setItems(options, (dialog, which) -> {
-                    if (which == listNames.size()) {
-                        showCreateListDialog();
-                    } else {
-                        switchList(listNames.get(which));
-                    }
+                    if (which == listNames.size()) showCreateListDialog();
+                    else switchList(listNames.get(which));
                 })
                 .show();
     }
@@ -377,18 +408,13 @@ public class DashboardActivity extends AppCompatActivity {
         sharedPreferences.edit().putString("current_list_name", currentListName).apply();
         tvCurrentListName.setText(currentListName);
         loadCurrentListItems();
-        setupShoppingList(); // Re-setup to refresh adapter and view
+        setupShoppingList();
     }
 
     private void showShoppingList(boolean show) {
-        if (show) {
-            dashboardContent.setVisibility(View.GONE);
-            spentContent.setVisibility(View.GONE);
-            shoppingListContent.setVisibility(View.VISIBLE);
-        } else {
-            shoppingListContent.setVisibility(View.GONE);
-            dashboardContent.setVisibility(View.VISIBLE);
-        }
+        dashboardContent.setVisibility(show ? View.GONE : View.VISIBLE);
+        spentContent.setVisibility(View.GONE);
+        shoppingListContent.setVisibility(show ? View.VISIBLE : View.GONE);
     }
 
     private void showSpentContent() {
@@ -402,177 +428,108 @@ public class DashboardActivity extends AppCompatActivity {
         FirebaseUser user = mAuth.getCurrentUser();
         if (user == null) return;
 
-        // 1. Get all receipt fileNames from Firestore for this user
         db.collection("receipts")
                 .whereEqualTo("userId", user.getUid())
                 .get()
                 .addOnSuccessListener(queryDocumentSnapshots -> {
                     if (queryDocumentSnapshots.isEmpty()) {
-                        Toast.makeText(DashboardActivity.this, "No receipts found in Firestore", Toast.LENGTH_SHORT).show();
                         updateSpentList(new ArrayList<>());
                         return;
                     }
-
                     List<String> fileNames = new ArrayList<>();
                     for (com.google.firebase.firestore.DocumentSnapshot doc : queryDocumentSnapshots) {
                         String fileName = doc.getString("fileName");
                         if (fileName != null) {
-                            // RTDB keys are formatted: receipts_filename_extension
-                            String filePath = "receipts/" + fileName;
-                            String receiptId = filePath.replace(".", "_")
-                                                       .replace("#", "_")
-                                                       .replace("$", "_")
-                                                       .replace("/", "_")
-                                                       .replace("[", "_")
-                                                       .replace("]", "_");
+                            String receiptId = ("receipts/" + fileName).replace(".", "_").replace("#", "_").replace("$", "_").replace("/", "_").replace("[", "_").replace("]", "_");
                             fileNames.add(receiptId);
                         }
                     }
-
-                    if (fileNames.isEmpty()) {
-                        updateSpentList(new ArrayList<>());
-                        return;
-                    }
-
-                    Toast.makeText(DashboardActivity.this, "Checking " + fileNames.size() + " receipts...", Toast.LENGTH_SHORT).show();
-                    // 2. Fetch each receipt from RTDB by its receiptId
                     fetchReceiptsFromRTDB(fileNames);
-                })
-                .addOnFailureListener(e -> {
-                    Toast.makeText(DashboardActivity.this, "Error fetching receipt list: " + e.getMessage(), Toast.LENGTH_SHORT).show();
                 });
     }
 
-    private void fetchReceiptsFromRTDB(List<String> receiptIds) {
+    private void fetchReceiptsFromRTDB(List<String> ids) {
         rtdb.getReference("receipts").addListenerForSingleValueEvent(new ValueEventListener() {
             @Override
             public void onDataChange(@NonNull DataSnapshot snapshot) {
-                List<Map<String, Object>> receipts = new ArrayList<>();
-                for (DataSnapshot ds : snapshot.getChildren()) {
-                    String key = ds.getKey();
-                    if (key != null && receiptIds.contains(key)) {
-                        Map<String, Object> data = (Map<String, Object>) ds.getValue();
-                        if (data != null) {
-                            receipts.add(data);
-                        }
+                List<Map<String, Object>> receiptsData = new ArrayList<>();
+                for (String id : ids) {
+                    DataSnapshot receiptSnap = snapshot.child(id);
+                    if (receiptSnap.exists() && "processed".equals(receiptSnap.child("status").getValue(String.class))) {
+                        Map<String, Object> data = (Map<String, Object>) receiptSnap.getValue();
+                        if (data != null) receiptsData.add(data);
                     }
                 }
-                
-                android.util.Log.d("RTDB_DEBUG", "Found " + receipts.size() + " matches in RTDB");
-                sortAndUpdateSpent(receipts);
+                sortAndUpdateSpent(receiptsData);
             }
-
-            @Override
-            public void onCancelled(@NonNull DatabaseError error) {
-                Toast.makeText(DashboardActivity.this, "RTDB Error: " + error.getMessage(), Toast.LENGTH_SHORT).show();
-                sortAndUpdateSpent(new ArrayList<>());
-            }
+            @Override public void onCancelled(@NonNull DatabaseError error) {}
         });
     }
 
-    private void sortAndUpdateSpent(List<Map<String, Object>> receipts) {
-        // Sort by processedAt descending
-        Collections.sort(receipts, (a, b) -> {
-            try {
-                long t1 = 0, t2 = 0;
-                if (a.containsKey("processedAt")) {
-                    Object p1 = a.get("processedAt");
-                    t1 = (p1 instanceof Long) ? (Long) p1 : ((Number) p1).longValue();
-                }
-                if (b.containsKey("processedAt")) {
-                    Object p2 = b.get("processedAt");
-                    t2 = (p2 instanceof Long) ? (Long) p2 : ((Number) p2).longValue();
-                }
-                return Long.compare(t2, t1);
-            } catch (Exception e) {
-                return 0;
-            }
+    private void sortAndUpdateSpent(List<Map<String, Object>> list) {
+        Collections.sort(list, (o1, o2) -> {
+            Long t1 = (Long) o1.get("processedAt");
+            Long t2 = (Long) o2.get("processedAt");
+            return Long.compare(t2 != null ? t2 : 0, t1 != null ? t1 : 0);
         });
-
-        updateSpentList(receipts);
+        updateSpentList(list);
     }
 
-    private void updateSpentList(List<Map<String, Object>> receipts) {
-        runOnUiThread(() -> {
-            if (receipts.isEmpty()) {
-                findViewById(R.id.tvSpentEmpty).setVisibility(View.VISIBLE);
-                Toast.makeText(this, "No receipts found in database", Toast.LENGTH_SHORT).show();
-            } else {
-                findViewById(R.id.tvSpentEmpty).setVisibility(View.GONE);
-                Toast.makeText(this, "Showing " + receipts.size() + " expenses", Toast.LENGTH_SHORT).show();
-            }
-
-            SpentListAdapter spentAdapter = new SpentListAdapter(receipts);
-            rvSpentList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
-            rvSpentList.setAdapter(spentAdapter);
-        });
+    private void updateSpentList(List<Map<String, Object>> list) {
+        rvSpentList.setLayoutManager(new androidx.recyclerview.widget.LinearLayoutManager(this));
+        rvSpentList.setAdapter(new SpentListAdapter(list));
     }
 
     private static class SpentListAdapter extends RecyclerView.Adapter<SpentListAdapter.ViewHolder> {
         private final List<Map<String, Object>> receipts;
+        SpentListAdapter(List<Map<String, Object>> receipts) { this.receipts = receipts; }
 
-        SpentListAdapter(List<Map<String, Object>> receipts) {
-            this.receipts = receipts;
+        @NonNull @Override public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new ViewHolder(LayoutInflater.from(parent.getContext()).inflate(R.layout.item_spent_receipt, parent, false));
         }
 
-        @NonNull
-        @Override
-        public ViewHolder onCreateViewHolder(@NonNull android.view.ViewGroup parent, int viewType) {
-            View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_spent_receipt, parent, false);
-            return new ViewHolder(view);
-        }
-
-        @Override
-        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+        @Override public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
             Map<String, Object> data = receipts.get(position);
-            
             Map<String, Object> store = (Map<String, Object>) data.get("store");
             Map<String, Object> receipt = (Map<String, Object>) data.get("receipt");
             Map<String, Object> summary = (Map<String, Object>) data.get("summary");
-
             if (store != null) {
-                holder.tvStoreName.setText((String) store.get("name"));
-                holder.tvStoreAddress.setText((String) store.get("address"));
+                holder.tvStoreName.setText(String.valueOf(store.getOrDefault("name", "Unknown Store")));
+                holder.tvStoreAddress.setText(String.valueOf(store.getOrDefault("address", "No Address")));
             }
-
             if (receipt != null) {
                 Object total = receipt.get("total");
-                holder.tvTotalAmount.setText("£" + (total != null ? total.toString() : "0.00"));
-                holder.tvDate.setText((String) receipt.get("date"));
+                double totalVal = 0;
+                if (total instanceof Number) totalVal = ((Number) total).doubleValue();
+                else if (total instanceof String) {
+                    try { totalVal = Double.parseDouble((String) total); } catch (Exception ignored) {}
+                }
+                holder.tvTotalAmount.setText(String.format(Locale.UK, "£%.2f", totalVal));
+                
+                Object date = receipt.get("date");
+                holder.tvDate.setText(date != null ? date.toString() : "");
             }
-
             if (summary != null) {
                 Object count = summary.get("itemCount");
                 holder.tvItemCount.setText((count != null ? count.toString() : "0") + " items");
             }
         }
-
-        @Override
-        public int getItemCount() {
-            return receipts.size();
-        }
-
+        @Override public int getItemCount() { return receipts.size(); }
         static class ViewHolder extends RecyclerView.ViewHolder {
             TextView tvStoreName, tvTotalAmount, tvStoreAddress, tvDate, tvItemCount;
-
-            ViewHolder(View view) {
-                super(view);
-                tvStoreName = view.findViewById(R.id.tvStoreName);
-                tvTotalAmount = view.findViewById(R.id.tvTotalAmount);
-                tvStoreAddress = view.findViewById(R.id.tvStoreAddress);
-                tvDate = view.findViewById(R.id.tvDate);
-                tvItemCount = view.findViewById(R.id.tvItemCount);
+            ViewHolder(View v) {
+                super(v);
+                tvStoreName = v.findViewById(R.id.tvStoreName); tvTotalAmount = v.findViewById(R.id.tvTotalAmount);
+                tvStoreAddress = v.findViewById(R.id.tvStoreAddress); tvDate = v.findViewById(R.id.tvDate);
+                tvItemCount = v.findViewById(R.id.tvItemCount);
             }
         }
     }
 
     @Override
     public void onBackPressed() {
-        if (shoppingListContent.getVisibility() == View.VISIBLE || spentContent.getVisibility() == View.VISIBLE) {
-            showShoppingList(false);
-        } else {
-            super.onBackPressed();
-        }
+        if (shoppingListContent.getVisibility() == View.VISIBLE || spentContent.getVisibility() == View.VISIBLE) showShoppingList(false);
+        else super.onBackPressed();
     }
 
     private void updateShoppingListPreview() {
@@ -580,81 +537,82 @@ public class DashboardActivity extends AppCompatActivity {
             tvShoppingListPreview.setText("No items in your list");
         } else {
             StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < Math.min(3, shoppingItems.size()); i++) {
-                sb.append("• ").append(shoppingItems.get(i)).append("\n");
-            }
+            for (int i = 0; i < Math.min(3, shoppingItems.size()); i++) sb.append("• ").append(shoppingItems.get(i).name).append("\n");
             if (shoppingItems.size() > 3) sb.append("...");
             tvShoppingListPreview.setText(sb.toString().trim());
         }
     }
 
     private static class ShoppingListAdapter extends RecyclerView.Adapter<ShoppingListAdapter.ViewHolder> {
-        private final java.util.List<String> items;
+        private final List<ShoppingItem> items;
         private final OnItemClickListener listener;
-
-        interface OnItemClickListener {
-            void onItemClick(int position);
-            void onDeleteClick(int position);
+        interface OnItemClickListener { void onItemClick(int position); void onDeleteClick(int position); }
+        ShoppingListAdapter(List<ShoppingItem> items, OnItemClickListener l) { this.items = items; this.listener = l; }
+        @NonNull @Override public ViewHolder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            return new ViewHolder(LayoutInflater.from(parent.getContext()).inflate(R.layout.item_shopping_list, parent, false));
         }
+        @Override public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
+            ShoppingItem item = items.get(position);
+            holder.tvItemName.setText(item.name);
+            if (item.price != null && !item.price.isEmpty()) {
+                holder.tvItemPrice.setVisibility(View.VISIBLE);
+                holder.tvItemPrice.setText("£" + item.price + (item.store.isEmpty() ? "" : " at " + item.store));
+            } else holder.tvItemPrice.setVisibility(View.GONE);
 
-        ShoppingListAdapter(java.util.List<String> items, OnItemClickListener listener) {
-            this.items = items;
-            this.listener = listener;
-        }
-
-        @NonNull
-        @Override
-        public ViewHolder onCreateViewHolder(@NonNull android.view.ViewGroup parent, int viewType) {
-            View view = LayoutInflater.from(parent.getContext()).inflate(R.layout.item_shopping_list, parent, false);
-            return new ViewHolder(view);
-        }
-
-        @Override
-        public void onBindViewHolder(@NonNull ViewHolder holder, int position) {
-            holder.tvItemName.setText(items.get(position));
+            if (item.isChecked) {
+                holder.tvItemName.setPaintFlags(holder.tvItemName.getPaintFlags() | android.graphics.Paint.STRIKE_THRU_TEXT_FLAG);
+                holder.tvItemName.setAlpha(0.5f);
+                holder.ivCheck.setImageResource(android.R.drawable.checkbox_on_background);
+            } else {
+                holder.tvItemName.setPaintFlags(holder.tvItemName.getPaintFlags() & (~android.graphics.Paint.STRIKE_THRU_TEXT_FLAG));
+                holder.tvItemName.setAlpha(1.0f);
+                holder.ivCheck.setImageResource(android.R.drawable.checkbox_off_background);
+            }
             holder.itemView.setOnClickListener(v -> listener.onItemClick(position));
             holder.btnDelete.setOnClickListener(v -> listener.onDeleteClick(position));
         }
+        @Override public int getItemCount() { return items.size(); }
+        static class ViewHolder extends RecyclerView.ViewHolder {
+            TextView tvItemName, tvItemPrice; ImageButton btnDelete; ImageView ivCheck;
+            ViewHolder(View v) { super(v); tvItemName = v.findViewById(R.id.tvItemName); tvItemPrice = v.findViewById(R.id.tvItemPrice); btnDelete = v.findViewById(R.id.btnDelete); ivCheck = v.findViewById(R.id.ivCheck); }
+        }
+    }
 
-        @Override
-        public int getItemCount() {
-            return items.size();
+    static class ShoppingItem {
+        String name, price, store;
+        boolean isChecked;
+
+        ShoppingItem(String n, String p, String s, boolean c) {
+            this.name = (n != null) ? n.replace("|", " ").trim() : "";
+            this.price = (p != null) ? p.replace("|", " ").trim() : "";
+            this.store = (s != null) ? s.replace("|", " ").trim() : "";
+            this.isChecked = c;
         }
 
-        static class ViewHolder extends RecyclerView.ViewHolder {
-            TextView tvItemName;
-            ImageButton btnDelete;
+        String toCsv() {
+            return name + "|" + price + "|" + store + "|" + isChecked;
+        }
 
-            ViewHolder(View view) {
-                super(view);
-                tvItemName = view.findViewById(R.id.tvItemName);
-                btnDelete = view.findViewById(R.id.btnDelete);
+        static ShoppingItem fromCsv(String csv) {
+            if (csv == null || csv.isEmpty()) return new ShoppingItem("", "", "", false);
+            String[] parts = csv.split("\\|", -1);
+            if (parts.length >= 4) {
+                return new ShoppingItem(parts[0], parts[1], parts[2], Boolean.parseBoolean(parts[3]));
+            } else if (parts.length > 0) {
+                return new ShoppingItem(parts[0], "", "", false);
             }
+            return new ShoppingItem("", "", "", false);
         }
     }
 
     private void checkLocationPermissions() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            fetchLocation();
-        } else {
-            locationPermissionLauncher.launch(new String[]{
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-            });
-        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) fetchLocation();
+        else locationPermissionLauncher.launch(new String[]{Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION});
     }
 
     private void fetchLocation() {
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-        fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> {
-            if (location != null) {
-                updateLocationUI(location);
-            } else {
-                Toast.makeText(this, "Failed to get location. Try again.", Toast.LENGTH_SHORT).show();
-            }
-        });
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        fusedLocationClient.getLastLocation().addOnSuccessListener(this, location -> { if (location != null) updateLocationUI(location); });
     }
 
     private void updateLocationUI(Location location) {
@@ -662,273 +620,96 @@ public class DashboardActivity extends AppCompatActivity {
         try {
             List<Address> addresses = geocoder.getFromLocation(location.getLatitude(), location.getLongitude(), 1);
             if (addresses != null && !addresses.isEmpty()) {
-                String city = addresses.get(0).getLocality();
-                if (city == null) city = addresses.get(0).getSubAdminArea();
-                
-                // Update UI state to success
                 tvLogo.setTextColor(ContextCompat.getColor(this, R.color.neo_mint_accent));
                 tvLocationBubble.setVisibility(View.GONE);
-                
                 fetchNearbyPlaces();
             }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+        } catch (IOException e) { e.printStackTrace(); }
     }
 
     private void fetchNearbyPlaces() {
-        List<Place.Field> placeFields = java.util.Arrays.asList(Place.Field.DISPLAY_NAME, Place.Field.TYPES, Place.Field.LOCATION);
-        FindCurrentPlaceRequest request = FindCurrentPlaceRequest.newInstance(placeFields);
-
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            return;
-        }
-
-        placesClient.findCurrentPlace(request)
-                .addOnSuccessListener(((response) -> {
-                    tvStoreListEmpty.setVisibility(View.GONE);
-                    llStoreContainer.removeAllViews();
-                    
-                    int count = 0;
-                    for (PlaceLikelihood placeLikelihood : response.getPlaceLikelihoods()) {
-                        Place place = placeLikelihood.getPlace();
-                        List<String> types = place.getPlaceTypes();
-                        
-                        // Filter for supermarkets or grocery stores
-                        if (types != null && (types.contains("supermarket") || types.contains("grocery_or_supermarket") || types.contains("convenience_store"))) {
-                            addStoreView(place);
-                            count++;
-                        }
-                        if (count >= 5) break; // Limit to 5 nearby stores
-                    }
-                    
-                    if (count == 0) {
-                        tvStoreListEmpty.setVisibility(View.VISIBLE);
-                        tvStoreListEmpty.setText("No supermarkets found nearby.");
-                    }
-                }))
-                .addOnFailureListener((e) -> {
-                    Toast.makeText(this, "Places API Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-                    // Fallback to dummy data if API fails (likely due to missing API Key)
-                    showClosestStores("Unknown");
-                });
+        List<Place.Field> fields = java.util.Arrays.asList(Place.Field.DISPLAY_NAME, Place.Field.TYPES, Place.Field.LOCATION);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) return;
+        placesClient.findCurrentPlace(FindCurrentPlaceRequest.newInstance(fields)).addOnSuccessListener(response -> {
+            tvStoreListEmpty.setVisibility(View.GONE); llStoreContainer.removeAllViews();
+            int count = 0;
+            for (PlaceLikelihood pl : response.getPlaceLikelihoods()) {
+                Place p = pl.getPlace(); List<String> types = p.getPlaceTypes();
+                if (types != null && (types.contains("supermarket") || types.contains("grocery_or_supermarket"))) {
+                    addStoreView(p); count++;
+                }
+                if (count >= 5) break;
+            }
+            if (count == 0) showClosestStores("Unknown");
+        }).addOnFailureListener(e -> showClosestStores("Unknown"));
     }
 
     private void addStoreView(Place place) {
-        LayoutInflater inflater = LayoutInflater.from(this);
-        View itemView = inflater.inflate(R.layout.item_supermarket, llStoreContainer, false);
-        
-        ImageView ivStoreArrow = itemView.findViewById(R.id.ivStoreArrow);
-        TextView tvStoreName = itemView.findViewById(R.id.tvStoreName);
-        TextView tvStoreDistance = itemView.findViewById(R.id.tvStoreDistance);
-        TextView tvStoreFuel = itemView.findViewById(R.id.tvStoreFuel);
-        TextView tvStoreTime = itemView.findViewById(R.id.tvStoreTime);
-        TextView tvStorePrice = itemView.findViewById(R.id.tvStorePrice);
+        View itemView = LayoutInflater.from(this).inflate(R.layout.item_supermarket, llStoreContainer, false);
+        TextView tvStoreName = itemView.findViewById(R.id.tvStoreName), tvStoreDistance = itemView.findViewById(R.id.tvStoreDistance), tvStoreFuel = itemView.findViewById(R.id.tvStoreFuel), tvStoreTime = itemView.findViewById(R.id.tvStoreTime), tvStorePrice = itemView.findViewById(R.id.tvStorePrice);
         ImageView ivFuelIcon = (ImageView) ((LinearLayout)itemView.findViewById(R.id.llStoreDetails)).getChildAt(1);
-
-        if (place.getDisplayName() != null) {
-            tvStoreName.setText(place.getDisplayName());
-        }
-        
-        // Estimate distance since findCurrentPlace with new SDK doesn't always provide direct distance
-        double distanceMiles = (Math.random() * 1.5) + 0.1;
-        
-        tvStoreDistance.setText(String.format(Locale.UK, "%.1f miles", distanceMiles));
-        
-        // Calculate values based on transport mode
-        int timeMins;
-        double fuelCost;
-        if (isWalkMode) {
-            timeMins = (int) (distanceMiles * 18); // Average walking speed in UK: 18-20 mins per mile
-            fuelCost = 0.0;
-            ivFuelIcon.setVisibility(View.GONE);
-            tvStoreFuel.setVisibility(View.GONE);
-        } else {
-            timeMins = (int) (distanceMiles * 4 + 3); // Average UK city driving: 4 mins per mile + 3 mins overhead
-            fuelCost = distanceMiles * 0.16; // Average UK car: ~£0.16 per mile
-            ivFuelIcon.setVisibility(View.VISIBLE);
-            tvStoreFuel.setVisibility(View.VISIBLE);
-        }
-
-        tvStoreFuel.setText(String.format(Locale.UK, "£%.2f", fuelCost));
-        tvStoreTime.setText(timeMins + " min");
-        
-        // Random price indicator as Google doesn't always provide it for all stores
-        String[] prices = {"£", "££", "£££"};
-        tvStorePrice.setText(prices[(int)(Math.random() * 3)]);
-
+        tvStoreName.setText(place.getDisplayName());
+        double dist = (Math.random() * 1.5) + 0.1;
+        tvStoreDistance.setText(String.format(Locale.UK, "%.1f miles", dist));
+        int time = (int)(dist * (isWalkMode ? 18 : 4) + (isWalkMode ? 0 : 3));
+        double fuel = isWalkMode ? 0 : dist * 0.16;
+        ivFuelIcon.setVisibility(isWalkMode ? View.GONE : View.VISIBLE);
+        tvStoreFuel.setVisibility(isWalkMode ? View.GONE : View.VISIBLE);
+        tvStoreFuel.setText(String.format(Locale.UK, "£%.2f", fuel));
+        tvStoreTime.setText(time + " min");
+        tvStorePrice.setText(new String[]{"£", "££", "£££"}[(int)(Math.random() * 3)]);
         llStoreContainer.addView(itemView);
-        
-        // Divider
-        View divider = new View(this);
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1);
-        params.setMargins(180, 0, 0, 0);
-        divider.setLayoutParams(params);
-        divider.setBackgroundColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-        divider.setAlpha(0.2f);
-        llStoreContainer.addView(divider);
     }
 
     private void showClosestStores(String city) {
-        tvStoreListEmpty.setVisibility(View.GONE);
         llStoreContainer.removeAllViews();
-        
-        String[] names = {"Waitrose & Partners", "Marks & Spencer", "Sainsbury's Local", "Tesco Superstore"};
-        double[] distanceValues = {0.4, 0.9, 1.2, 1.5};
-        String[] prices = {"£££", "£££", "££", "£"};
-
-        LayoutInflater inflater = LayoutInflater.from(this);
-
+        String[] names = {"Waitrose", "M&S", "Sainsbury's", "Tesco"};
         for (int i = 0; i < names.length; i++) {
-            View itemView = inflater.inflate(R.layout.item_supermarket, llStoreContainer, false);
-            
-            ImageView ivStoreArrow = itemView.findViewById(R.id.ivStoreArrow);
-            TextView tvStoreName = itemView.findViewById(R.id.tvStoreName);
-            TextView tvStoreDistance = itemView.findViewById(R.id.tvStoreDistance);
-            TextView tvStoreFuel = itemView.findViewById(R.id.tvStoreFuel);
-            TextView tvStoreTime = itemView.findViewById(R.id.tvStoreTime);
-            TextView tvStorePrice = itemView.findViewById(R.id.tvStorePrice);
-            ImageView ivFuelIcon = (ImageView) ((LinearLayout)itemView.findViewById(R.id.llStoreDetails)).getChildAt(1);
-
-            // Set random rotation to the arrow
-            float randomRotation = (float) (Math.random() * 360);
-            ivStoreArrow.setRotation(randomRotation);
-
-            tvStoreName.setText(names[i]);
-            tvStoreDistance.setText(distanceValues[i] + " miles");
-            
-            // Calculate values
-            int timeMins;
-            double fuelCost;
-            
-            if (isWalkMode) {
-                timeMins = (int) (distanceValues[i] * 18); // Average walking speed: 18 mins per mile
-                fuelCost = 0.0;
-                ivFuelIcon.setVisibility(View.GONE);
-                tvStoreFuel.setVisibility(View.GONE);
-            } else {
-                timeMins = (int) (distanceValues[i] * 4 + 3); // Average UK city driving: 4 mins per mile + 3 mins overhead
-                fuelCost = distanceValues[i] * 0.16; // Average UK car: ~£0.16 per mile
-                ivFuelIcon.setVisibility(View.VISIBLE);
-                tvStoreFuel.setVisibility(View.VISIBLE);
-            }
-
-            tvStoreFuel.setText(String.format(Locale.UK, "£%.2f", fuelCost));
-            tvStoreTime.setText(timeMins + " min");
-            tvStorePrice.setText(prices[i]);
-
-            llStoreContainer.addView(itemView);
-
-            // Add divider if not last
-            if (i < names.length - 1) {
-                View divider = new View(this);
-                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT, 1);
-                params.setMargins(180, 0, 0, 0); // Align with text
-                divider.setLayoutParams(params);
-                divider.setBackgroundColor(ContextCompat.getColor(this, android.R.color.darker_gray));
-                divider.setAlpha(0.2f);
-                llStoreContainer.addView(divider);
-            }
+            View v = LayoutInflater.from(this).inflate(R.layout.item_supermarket, llStoreContainer, false);
+            ((TextView)v.findViewById(R.id.tvStoreName)).setText(names[i]);
+            double dist = 0.4 + (i * 0.3);
+            ((TextView)v.findViewById(R.id.tvStoreDistance)).setText(dist + " miles");
+            llStoreContainer.addView(v);
         }
     }
 
     private void setupUserDisplay() {
         FirebaseUser user = mAuth.getCurrentUser();
-        String fullName = (user != null && user.getDisplayName() != null) ? user.getDisplayName() : "Grocio User";
-        
-        // Use first name only
-        String firstName = fullName.split(" ")[0];
-        tvUserName.setText(firstName);
-
-        // Dynamic Greeting
-        Calendar c = Calendar.getInstance();
-        int timeOfDay = c.get(Calendar.HOUR_OF_DAY);
-        String greeting;
-        if (timeOfDay < 12) {
-            greeting = "Good Morning,";
-        } else if (timeOfDay < 16) {
-            greeting = "Good Afternoon,";
-        } else if (timeOfDay < 21) {
-            greeting = "Good Evening,";
-        } else {
-            greeting = "Welcome Back,";
-        }
-        tvWelcome.setText(greeting);
+        String name = (user != null && user.getDisplayName() != null) ? user.getDisplayName().split(" ")[0] : "User";
+        tvUserName.setText(name);
+        int hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY);
+        tvWelcome.setText(hour < 12 ? "Good Morning," : hour < 16 ? "Good Afternoon," : hour < 21 ? "Good Evening," : "Welcome Back,");
     }
 
-    private void setupBottomNavigation(BottomNavigationView bottomNav) {
-        bottomNav.setOnItemSelectedListener(item -> {
-            int itemId = item.getItemId();
-            if (itemId == R.id.nav_home) {
-                showShoppingList(false);
-                spentContent.setVisibility(View.GONE);
-                return true;
-            } else if (itemId == R.id.nav_scan) {
-                showScanDialog();
-                return true;
-            } else if (itemId == R.id.nav_list) {
-                showShoppingList(true);
-                return true;
-            } else if (itemId == R.id.nav_spent) {
-                showSpentContent();
-                return true;
-            }
+    private void setupBottomNavigation(BottomNavigationView nav) {
+        nav.setOnItemSelectedListener(item -> {
+            int id = item.getItemId();
+            if (id == R.id.nav_home) { showShoppingList(false); return true; }
+            if (id == R.id.nav_scan) { showScanDialog(); return true; }
+            if (id == R.id.nav_list) { showShoppingList(true); return true; }
+            if (id == R.id.nav_spent) { showSpentContent(); return true; }
             return false;
         });
     }
 
     private void showScanDialog() {
-        String[] options = {"Camera", "Upload from Gallery"};
-        new AlertDialog.Builder(this)
-                .setTitle("Select Image Source")
-                .setItems(options, (dialog, which) -> {
-                    if (which == 0) {
-                        Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
-                        takePhotoLauncher.launch(takePictureIntent);
-                    } else {
-                        Intent pickPhotoIntent = new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI);
-                        pickImageLauncher.launch(pickPhotoIntent);
-                    }
-                })
-                .show();
+        new AlertDialog.Builder(this).setTitle("Select Source").setItems(new String[]{"Camera", "Gallery"}, (d, w) -> {
+            if (w == 0) takePhotoLauncher.launch(new Intent(MediaStore.ACTION_IMAGE_CAPTURE));
+            else pickImageLauncher.launch(new Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI));
+        }).show();
     }
 
     private void showProfileMenu() {
-        String[] options = {"My Orders", "Address Book", "Payment Methods", "Notifications", "Logout", "Delete Account & Data"};
-        
-        AlertDialog.Builder builder = new AlertDialog.Builder(this);
-        builder.setTitle("Profile Settings");
-        builder.setItems(options, (dialog, which) -> {
-            switch (which) {
-                case 0: // My Orders
-                    Toast.makeText(this, "Opening Orders...", Toast.LENGTH_SHORT).show();
-                    break;
-                case 4: // Logout
-                    logoutUser();
-                    break;
-                case 5: // Delete Account
-                    showDeleteConfirmation();
-                    break;
-                default:
-                    Toast.makeText(this, "Selected: " + options[which], Toast.LENGTH_SHORT).show();
-                    break;
-            }
-        });
-        builder.show();
+        new AlertDialog.Builder(this).setTitle("Profile").setItems(new String[]{"Logout", "Delete Account"}, (d, w) -> {
+            if (w == 0) { mAuth.signOut(); finish(); }
+            else showDeleteAccountConfirmation();
+        }).show();
     }
 
-    private void logoutUser() {
-        mAuth.signOut();
-        Toast.makeText(this, "Logged out successfully", Toast.LENGTH_SHORT).show();
-        // Redirect to Login if needed
-        finish();
-    }
-
-    private void showDeleteConfirmation() {
+    private void showDeleteAccountConfirmation() {
         new AlertDialog.Builder(this)
                 .setTitle("Delete Account")
-                .setMessage("Are you sure you want to delete your account and all associated data? This action is permanent.")
+                .setMessage("Are you sure you want to permanently delete your account? This action cannot be undone.")
                 .setPositiveButton("Delete", (dialog, which) -> {
                     FirebaseUser user = mAuth.getCurrentUser();
                     if (user != null) {
@@ -937,13 +718,69 @@ public class DashboardActivity extends AppCompatActivity {
                                 Toast.makeText(DashboardActivity.this, "Account deleted", Toast.LENGTH_SHORT).show();
                                 finish();
                             } else {
-                                Toast.makeText(DashboardActivity.this, "Failed to delete account", Toast.LENGTH_SHORT).show();
+                                Toast.makeText(DashboardActivity.this, "Failed to delete account: " + task.getException().getMessage(), Toast.LENGTH_SHORT).show();
                             }
                         });
                     }
                 })
                 .setNegativeButton("Cancel", null)
-                .setIcon(android.R.drawable.ic_dialog_alert)
                 .show();
+    }
+
+    private void setupSearchSuggestions() {
+        class SuggestionAdapter extends android.widget.BaseAdapter implements android.widget.Filterable {
+            private List<Map<String, String>> full = new ArrayList<>(), filtered = new ArrayList<>();
+            public void setData(List<Map<String, String>> d) { full = d; filtered = new ArrayList<>(d); notifyDataSetChanged(); }
+            @Override public int getCount() { return filtered.size(); }
+            @Override public Map<String, String> getItem(int p) { return filtered.get(p); }
+            @Override public long getItemId(int p) { return p; }
+            @Override public View getView(int p, View v, ViewGroup pr) {
+                if (v == null) v = LayoutInflater.from(pr.getContext()).inflate(R.layout.item_suggestion, pr, false);
+                Map<String, String> item = getItem(p);
+                ((TextView)v.findViewById(R.id.tvSuggestionName)).setText(item.get("name"));
+                ((TextView)v.findViewById(R.id.tvSuggestionStore)).setText(item.get("store"));
+                ((TextView)v.findViewById(R.id.tvSuggestionPrice)).setText("£" + item.get("price"));
+                return v;
+            }
+            @Override public android.widget.Filter getFilter() {
+                return new android.widget.Filter() {
+                    @Override protected FilterResults performFiltering(CharSequence c) {
+                        List<Map<String, String>> res = new ArrayList<>();
+                        if (c != null) {
+                            String pat = c.toString().toLowerCase().trim();
+                            for (Map<String, String> i : full) if (i.get("name").toLowerCase().contains(pat)) res.add(i);
+                        }
+                        FilterResults fr = new FilterResults(); fr.values = res; fr.count = res.size(); return fr;
+                    }
+                    @Override protected void publishResults(CharSequence c, FilterResults r) {
+                        filtered.clear(); if (r.values != null) filtered.addAll((List) r.values); notifyDataSetChanged();
+                    }
+                    @Override public CharSequence convertResultToString(Object v) { return ((Map<String, String>) v).get("name"); }
+                };
+            }
+        }
+        SuggestionAdapter adapter = new SuggestionAdapter();
+        etItem.setAdapter(adapter);
+        rtdb.getReference("receipts").addListenerForSingleValueEvent(new ValueEventListener() {
+            @Override public void onDataChange(@NonNull DataSnapshot s) {
+                List<Map<String, String>> list = new ArrayList<>();
+                for (DataSnapshot rs : s.getChildren()) {
+                    String sn = rs.child("store").child("name").getValue(String.class);
+                    for (DataSnapshot is : rs.child("items").getChildren()) {
+                        String n = is.child("name").getValue(String.class);
+                        Double p = is.child("unitPrice").getValue(Double.class);
+                        if (n != null) {
+                            Map<String, String> m = new HashMap<>();
+                            m.put("name", n);
+                            m.put("store", sn != null ? sn : "Unknown");
+                            m.put("price", p != null ? String.format(Locale.UK, "%.2f", p) : "0.00");
+                            list.add(m);
+                        }
+                    }
+                }
+                adapter.setData(list);
+            }
+            @Override public void onCancelled(@NonNull DatabaseError e) {}
+        });
     }
 }
