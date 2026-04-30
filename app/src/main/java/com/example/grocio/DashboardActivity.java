@@ -241,7 +241,7 @@ public class DashboardActivity extends AppCompatActivity {
         btnTransportMode.setOnClickListener(v -> {
             isWalkMode = !isWalkMode;
             ivTransportIcon.setImageResource(isWalkMode ? R.drawable.ic_walk : R.drawable.ic_car);
-            tvTransportText.setText(isWalkMode ? "Walking" : "Driving");
+            tvTransportText.setText(isWalkMode ? "Walk" : "Drive");
             fetchLocation();
         });
 
