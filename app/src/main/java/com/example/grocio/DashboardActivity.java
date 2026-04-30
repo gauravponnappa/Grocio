@@ -231,7 +231,10 @@ public class DashboardActivity extends AppCompatActivity {
         
         setupShoppingList();
 
-        btnLocation.setOnClickListener(v -> checkLocationPermissions());
+        btnLocation.setOnClickListener(v -> {
+            Intent intent = new Intent(DashboardActivity.this, LocationSearchActivity.class);
+            startActivity(intent);
+        });
         btnProfileTop.setOnClickListener(v -> showProfileMenu());
         cvUploadReceipt.setOnClickListener(v -> showScanDialog());
         cvShoppingList.setOnClickListener(v -> showShoppingList(true));
