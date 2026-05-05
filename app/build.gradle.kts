@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.firebase.storage.ktx)
     implementation(libs.firebase.firestore.ktx)
     implementation(libs.firebase.database.ktx)
+    implementation(libs.okhttp)
     implementation(libs.places)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
